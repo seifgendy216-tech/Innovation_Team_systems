@@ -12,14 +12,15 @@ from audio_recorder_streamlit import audio_recorder
 DB_FILE = "ride_db.db"
 UPLOAD_DIR = "task_assets"
 
-# Ensure media folder exists
+# Create the media directory if it doesn't exist
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
+# SQLite Connection
 conn = st.connection("ride_db", type="sql")
 
 def init_db():
-    """Initializes schema and ensures persistent tables."""
+    """Initializes tables and ensures default admin persistence."""
     with conn.session as session:
         session.execute(text("""
             CREATE TABLE IF NOT EXISTS tasks (
@@ -38,6 +39,7 @@ def init_db():
                 username TEXT PRIMARY KEY, password TEXT, role TEXT
             );
         """))
+        # Check for initial admin
         res = session.execute(text("SELECT COUNT(*) FROM users")).fetchone()
         if res[0] == 0:
             session.execute(text("INSERT INTO users (username, password, role) VALUES ('admin', 'admin789', 'admin')"))
@@ -45,7 +47,7 @@ def init_db():
 
 init_db()
 
-# ---- 2. STORAGE METRICS UTILITIES ----
+# ---- 2. STORAGE METRICS ----
 def get_size_format(b, factor=1024, suffix="B"):
     for unit in ["", "K", "M", "G", "T"]:
         if b < factor: return f"{b:.2f}{unit}{suffix}"
@@ -65,7 +67,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
-    st.title("🔐 Technician Portal Login")
+    st.title("🔐 Professional Portal Login")
     with st.container(border=True):
         u_input = st.text_input("Username")
         p_input = st.text_input("Password", type="password")
@@ -81,7 +83,7 @@ if not st.session_state.logged_in:
                 st.error("Invalid credentials.")
     st.stop()
 
-# ---- 4. FILE & DB HELPERS ----
+# ---- 4. FILE & DATABASE HELPERS ----
 def update_task_field(task_id, field, value):
     with conn.session as session:
         session.execute(text(f"UPDATE tasks SET {field}=:v WHERE id=:id"), {"v": value, "id": task_id})
@@ -97,7 +99,7 @@ def save_files(uploaded_files, prefix="img"):
             filenames.append(fname)
     return ",".join(filenames) if filenames else None
 
-# ---- 5. SIDEBAR: ADMIN DASHBOARD & STORAGE ----
+# ---- 5. SIDEBAR: ADMIN TOOLS & STORAGE MONITOR ----
 st.sidebar.title(f"👤 {st.session_state.username}")
 if st.sidebar.button("Log Out"):
     for key in list(st.session_state.keys()): del st.session_state[key]
@@ -114,12 +116,13 @@ if st.session_state.user_role == "admin":
     col_s1.metric("Database", get_size_format(db_size))
     col_s2.metric("Media", get_size_format(assets_size))
     
-    # ADVANCED ZIP EXPORT
-    if st.sidebar.button("📥 Export Comprehensive ZIP"):
+    # EXPORT ZIP
+    if st.sidebar.button("📥 Export Project ZIP"):
         df = conn.query("SELECT * FROM tasks", ttl=0)
         if not df.empty:
             excel_buffer = io.BytesIO()
             df_export = df.copy()
+            # Clean symbols for Excel
             df_export['task_status'] = df_export['task_status'].str.replace('🟡 ', '').str.replace('🟠 ', '').str.replace('🟢 ', '')
             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                 df_export.to_excel(writer, sheet_name='Report', index=False)
@@ -138,14 +141,14 @@ if st.session_state.user_role == "admin":
                     for root, _, files in os.walk(UPLOAD_DIR):
                         for file in files:
                             zf.write(os.path.join(root, file), os.path.join(UPLOAD_DIR, file))
-            st.sidebar.download_button("💾 Download ZIP", zip_buffer.getvalue(), "Full_Backup.zip")
+            st.sidebar.download_button("💾 Download ZIP", zip_buffer.getvalue(), "Full_System_Backup.zip")
 
     # USER MANAGEMENT (PERSISTENT)
     with st.sidebar.expander("👥 User Management"):
-        st.write("**Add New User Account**")
-        n_u = st.text_input("New Username", key="reg_u")
-        n_p = st.text_input("New Password", key="reg_p")
-        n_r = st.selectbox("Role", ["tech", "admin"], key="reg_r")
+        st.write("**Add User Account**")
+        n_u = st.text_input("New Username", key="nu")
+        n_p = st.text_input("New Password", key="np")
+        n_r = st.selectbox("Role", ["tech", "admin"], key="nr")
         if st.button("➕ Create Account", use_container_width=True):
             if n_u and n_p:
                 with conn.session as session:
@@ -155,7 +158,7 @@ if st.session_state.user_role == "admin":
                 st.rerun()
 
         st.divider()
-        st.write("**Manage Existing Users**")
+        st.write("**Modify Users**")
         all_u = conn.query("SELECT * FROM users", ttl=0)
         for _, urow in all_u.iterrows():
             with st.container(border=True):
@@ -173,11 +176,11 @@ if st.session_state.user_role == "admin":
                         session.commit()
                     st.rerun()
 
-    # DANGER ZONE: DATA WIPE ONLY (Users Persist)
+    # DANGER ZONE: DATA WIPE
     with st.sidebar.expander("🚨 Emergency Recovery"):
-        st.warning("This deletes all tasks and photos but keeps user accounts.")
-        confirm = st.text_input("Type 'WIPE' to delete task data")
-        if st.button("🗑️ CLEAR ALL TASK DATA", type="primary", use_container_width=True):
+        st.warning("Deletes tasks and photos only. Accounts remain.")
+        confirm = st.text_input("Type 'WIPE' to confirm")
+        if st.button("🗑️ CLEAR ALL TASK DATA", type="primary"):
             if confirm == "WIPE":
                 with conn.session as session:
                     session.execute(text("DELETE FROM tasks"))
@@ -186,18 +189,17 @@ if st.session_state.user_role == "admin":
                 if os.path.exists(UPLOAD_DIR):
                     shutil.rmtree(UPLOAD_DIR)
                     os.makedirs(UPLOAD_DIR)
-                st.success("Task history cleared. Users remain active.")
                 st.rerun()
 
 # ---- 6. UI: LOG MAINTENANCE ----
-st.title("👨‍🔧 Maintenance Portal")
+st.title("👨‍🔧 Maintenance Management")
 with st.expander("➕ Log New Maintenance Task", expanded=True):
     with st.form("task_submission"):
         r1_1, r1_2 = st.columns(2)
         t_title, t_loc = r1_1.text_input("Project Name"), r1_2.text_input("📍 Location")
         
         r2_1, r2_2, r2_3 = st.columns(3)
-        t_stat = r2_1.selectbox("Status", ["🟡 In Progress", "🟠 Awaiting Parts", "🟢 Completed"])
+        t_stat = r2_1.selectbox("Status", ["In Progress", "Awaiting Parts", "Completed"])
         sd, st_t = r2_2.date_input("Start Date"), r2_2.time_input("Start Time")
         ed, et_t = r2_3.date_input("End Date"), r2_3.time_input("End Time")
         
@@ -205,21 +207,21 @@ with st.expander("➕ Log New Maintenance Task", expanded=True):
         up_b = st.file_uploader("Before Photos", accept_multiple_files=True)
         up_a = st.file_uploader("After Photos", accept_multiple_files=True)
         
-        if st.form_submit_button("🚀 Submit Record", use_container_width=True):
-            if t_title:
-                b_names, a_names = save_files(up_b, "before"), save_files(up_a, "after")
-                with conn.session as session:
-                    session.execute(text("""INSERT INTO tasks (task_name, location, task_status, task_desc_text, 
-                        before_photo, after_photo, technician, user_comment, start_time, end_time) 
-                        VALUES (:n, :l, :s, :d, :bp, :ap, :t, :uc, :st, :et)"""),
-                        {"n": t_title, "l": t_loc, "s": t_stat, "d": t_desc, "bp": b_names, "ap": a_names, 
-                         "t": st.session_state.username, "uc": t_note, "st": f"{sd} {st_t}", "et": f"{ed} {et_t}"})
-                    session.commit()
-                st.rerun()
+        if st.form_submit_button("🚀 Submit Final Entry", use_container_width=True):
+            status_map = {"In Progress": "🟡 In Progress", "Awaiting Parts": "🟠 Awaiting Parts", "Completed": "🟢 Completed"}
+            b_names, a_names = save_files(up_b, "before"), save_files(up_a, "after")
+            with conn.session as session:
+                session.execute(text("""INSERT INTO tasks (task_name, location, task_status, task_desc_text, 
+                    before_photo, after_photo, technician, user_comment, start_time, end_time) 
+                    VALUES (:n, :l, :s, :d, :bp, :ap, :t, :uc, :st, :et)"""),
+                    {"n": t_title, "l": t_loc, "s": status_map[t_stat], "d": t_desc, "bp": b_names, "ap": a_names, 
+                     "t": st.session_state.username, "uc": t_note, "st": f"{sd} {st_t}", "et": f"{ed} {et_t}"})
+                session.commit()
+            st.rerun()
 
 # ---- 7. HISTORY & REVIEWS ----
 st.write("---")
-st.header("📋 Maintenance History")
+st.header("📋 Task History")
 
 df_tasks = conn.query("SELECT * FROM tasks ORDER BY id DESC", ttl=0)
 
@@ -238,10 +240,10 @@ for _, row in df_tasks.iterrows():
 
         st.caption(f"👤 {row['technician']} | 🕒 {row['start_time']} to {row['end_time']}")
         
-        # Photo Management
+        # Display/Delete Photos
         for label, col in [("Before", "before_photo"), ("After", "after_photo")]:
             if row[col]:
-                st.write(f"**{label}:**")
+                st.write(f"**{label} Documentation:**")
                 imgs = row[col].split(",")
                 p_cols = st.columns(5)
                 for i, img in enumerate(imgs):
@@ -252,32 +254,43 @@ for _, row in df_tasks.iterrows():
                             update_task_field(row['id'], col, ",".join(imgs) if imgs else None)
                             st.rerun()
 
-        # Feedback & Reviews
+        # Admin Feedback
         st.divider()
-        st.write(f"⭐ **Admin Rating:** {row['rating']}/10 | 📝 **Admin Feed:** {row['admin_comment']}")
+        st.write(f"⭐ **Quality Score:** {row['rating']}/10 | 📝 **Review:** {row['admin_comment']}")
         
         if is_admin:
-            with st.popover("📝 Admin Review"):
-                nr = st.select_slider("Rating", options=list(range(11)), value=int(row['rating']))
-                ac = st.text_area("Admin Comment", value=row['admin_comment'])
-                if st.button("Save Review", key=f"sr_{row['id']}"):
+            with st.popover("📝 Leave Admin Review"):
+                nr = st.select_slider("Score", options=list(range(11)), value=int(row['rating']))
+                ac = st.text_area("Admin Feedback", value=row['admin_comment'])
+                if st.button("Save", key=f"sr_{row['id']}"):
                     with conn.session as session:
                         session.execute(text("UPDATE tasks SET rating=:r, admin_comment=:c WHERE id=:id"), {"r": nr, "c": ac, "id": row['id']})
                         session.commit()
                     st.rerun()
 
-        # Advanced Edit
+        # ADVANCED EDIT: ADD BEFORE/AFTER PHOTOS
         if can_edit:
-            with st.expander("🛠️ Advanced Edit (Name/Status/Extra Photos)"):
+            with st.expander("🛠️ Advanced Edit (Add Photos & Info)"):
                 with st.form(f"adv_edit_{row['id']}"):
-                    en, el = st.text_input("Name", value=row['task_name']), st.text_input("Location", value=row['location'])
-                    es = st.selectbox("Status", ["🟡 In Progress", "🟠 Awaiting Parts", "🟢 Completed"])
-                    up_new = st.file_uploader("Add Photos", accept_multiple_files=True)
-                    if st.form_submit_button("Update"):
-                        new_p = save_files(up_new, "extra")
-                        final_b = (row['before_photo'] + "," + new_p) if row['before_photo'] and new_p else (new_p or row['before_photo'])
+                    ed_n, ed_l = st.text_input("Project Name", value=row['task_name']), st.text_input("Location", value=row['location'])
+                    ed_s = st.selectbox("Status Update", ["🟡 In Progress", "🟠 Awaiting Parts", "🟢 Completed"])
+                    
+                    st.write("**Upload Extra Photos:**")
+                    col_b, col_a = st.columns(2)
+                    add_b = col_b.file_uploader("➕ Add to Before", accept_multiple_files=True, key=f"ab_{row['id']}")
+                    add_a = col_a.file_uploader("➕ Add to After", accept_multiple_files=True, key=f"aa_{row['id']}")
+                    
+                    if st.form_submit_button("Update Task Details"):
+                        new_b_names = save_files(add_b, f"extra_b_{row['id']}")
+                        new_a_names = save_files(add_a, f"extra_a_{row['id']}")
+                        
+                        # Merge existing with new strings
+                        final_b = (row['before_photo'] + "," + new_b_names) if row['before_photo'] and new_b_names else (new_b_names or row['before_photo'])
+                        final_a = (row['after_photo'] + "," + new_a_names) if row['after_photo'] and new_a_names else (new_a_names or row['after_photo'])
+                        
                         with conn.session as session:
-                            session.execute(text("UPDATE tasks SET task_name=:n, location=:l, task_status=:s, before_photo=:bp WHERE id=:id"),
-                                            {"n": en, "l": el, "s": es, "bp": final_b, "id": row['id']})
+                            session.execute(text("""UPDATE tasks SET task_name=:n, location=:l, task_status=:s, 
+                                before_photo=:bp, after_photo=:ap WHERE id=:id"""),
+                                {"n": ed_n, "l": ed_l, "s": ed_s, "bp": final_b, "ap": final_a, "id": row['id']})
                             session.commit()
                         st.rerun()
