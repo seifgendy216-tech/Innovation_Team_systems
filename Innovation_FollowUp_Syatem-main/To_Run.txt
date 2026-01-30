@@ -1,0 +1,3 @@
+cd "C:\Users\A&G Computer World\website\Samsung website\website2"
+pip install -r requirements.txt   (only first time)
+python -m streamlit run app.py

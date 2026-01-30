@@ -1,0 +1,8 @@
+[tool.poetry.dependencies]
+python = "^3.10"
+streamlit = "^1.22.0"  # Required for st.connection
+streamlit-lottie = "0.0.3"
+requests = "^2.28.0"
+Pillow = "^9.0.0"
+# SQL drivers (needed for the database functionality)
+SQLAlchemy = "^2.0.0"
